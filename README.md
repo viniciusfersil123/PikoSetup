@@ -10,7 +10,9 @@ Na pasta deste repositório, abra o instalador gráfico:
 ./piko-setup
 ```
 
-A janela tem um botão **Instalar** e mostra a saída do instalador enquanto ele trabalha. A autenticação administrativa é solicitada pelo diálogo do Ubuntu. Se Tkinter ainda não estiver instalado, o lançador solicita autorização para instalar `python3-tk` antes de abrir a janela.
+A janela tem um botão **Instalar** e mostra a saída do instalador enquanto ele trabalha. Depois de uma instalação bem-sucedida, o botão vira **Run / Flash**: ele compila `patches/heavy.pd` e grava o firmware no Pico. Antes de clicar, conecte a placa em modo BOOTSEL e confirme a gravação na janela. A autenticação administrativa é solicitada pelo diálogo do Ubuntu. Se Tkinter ainda não estiver instalado, o lançador solicita autorização para instalar `python3-tk` antes de abrir a janela.
+
+Em aberturas futuras, se detectar que as dependências e o ambiente PikoPD continuam instalados, o programa abre direto com **Run / Flash**.
 
 Também é possível executar diretamente no terminal:
 

@@ -15,7 +15,28 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 INSTALLER = ROOT / "install-ubuntu.sh"
+PIKO_HOME = Path(os.environ.get("PIKO_HOME") or Path.home() / "piko-workspace").expanduser().resolve()
+PIKOPD_DIR = PIKO_HOME / "pikoPD"
+PIKOPD_LAUNCHER = PIKO_HOME / "pikopd"
+DEMO_PATCH = "patches/heavy.pd"
+DEMO_PROJECT = "piko_setup_heavy"
 ANSI_ESCAPE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))")
+os.environ["PATH"] = f"/usr/local/bin:{os.environ.get('PATH', '')}"
+
+
+def installation_is_ready() -> bool:
+    required_files = (
+        PIKOPD_DIR / "pikopd.py",
+        PIKOPD_DIR / DEMO_PATCH,
+        PIKOPD_DIR / "board.json",
+        PIKO_HOME / "pico-sdk" / "external" / "pico_sdk_import.cmake",
+        PIKO_HOME / "venv" / "bin" / "hvcc",
+        PIKOPD_LAUNCHER,
+    )
+    required_commands = ("cmake", "ninja", "arm-none-eabi-gcc", "picotool")
+    return all(path.is_file() for path in required_files) and all(
+        shutil.which(command) for command in required_commands
+    )
 
 
 def ensure_tkinter() -> None:
@@ -57,6 +78,7 @@ def main() -> int:
     root.title("PikoPD Setup")
     root.geometry("760x560")
     root.minsize(600, 440)
+    already_installed = installation_is_ready()
 
     colors = {
         "background": "#17191f",
@@ -126,7 +148,13 @@ def main() -> int:
     output.pack(side="left", fill="both", expand=True)
     scrollbar.pack(side="right", fill="y")
 
-    status = tk.StringVar(value="Pronto para instalar.")
+    status = tk.StringVar(
+        value=(
+            "Instalação detectada. Conecte o Pico em modo BOOTSEL para gravar."
+            if already_installed
+            else "Pronto para instalar."
+        )
+    )
     ttk.Label(outer, textvariable=status, wraplength=700).grid(
         row=3, column=0, sticky="w", pady=(12, 8)
     )
@@ -135,7 +163,7 @@ def main() -> int:
     button_row.columnconfigure(0, weight=1)
     install_button = tk.Button(
         button_row,
-        text="Instalar",
+        text="Run / Flash" if already_installed else "Instalar",
         width=16,
         height=2,
         padx=18,
@@ -163,15 +191,16 @@ def main() -> int:
         output.see("end")
         output.configure(state="disabled")
 
-    def run_install() -> None:
+    def run_command(action: str, command: list[str], cwd: Path, gui_admin: bool = False) -> None:
         nonlocal process
         environment = os.environ.copy()
-        environment["PIKOPD_GUI"] = "1"
         environment["PYTHONUNBUFFERED"] = "1"
+        if gui_admin:
+            environment["PIKOPD_GUI"] = "1"
         try:
             process = subprocess.Popen(
-                [str(INSTALLER)],
-                cwd=ROOT,
+                command,
+                cwd=cwd,
                 env=environment,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
@@ -183,15 +212,44 @@ def main() -> int:
                 if not chunk:
                     break
                 messages.put(("output", chunk.decode("utf-8", errors="replace")))
-            messages.put(("finished", process.wait()))
+            messages.put(("finished", (action, process.wait())))
         except Exception as error:  # Report launch errors in the window.
-            messages.put(("launch_error", str(error)))
+            messages.put(("launch_error", (action, str(error))))
 
     def start_install() -> None:
         install_button.configure(state="disabled")
         status.set("Instalando… A autenticação administrativa pode abrir outra janela.")
         append_output("Iniciando o instalador…\n\n")
-        threading.Thread(target=run_install, daemon=True).start()
+        threading.Thread(
+            target=run_command,
+            args=("install", [str(INSTALLER)], ROOT, True),
+            daemon=True,
+        ).start()
+
+    def start_flash() -> None:
+        if not PIKOPD_LAUNCHER.is_file() or not (PIKOPD_DIR / DEMO_PATCH).is_file():
+            messagebox.showerror(
+                "PikoPD Setup",
+                f"Não encontrei o lançador ou o patch de exemplo.\n\n"
+                f"Lançador: {PIKOPD_LAUNCHER}\nPatch: {PIKOPD_DIR / DEMO_PATCH}",
+            )
+            return
+        if not messagebox.askyesno(
+            "Gravar firmware no Pico",
+            "Conecte o Raspberry Pi Pico em modo BOOTSEL.\n\n"
+            "O exemplo patches/heavy.pd será compilado e gravado no dispositivo.\n"
+            "Deseja continuar?",
+        ):
+            return
+        install_button.configure(state="disabled")
+        status.set("Compilando heavy.pd e gravando no Pico…")
+        append_output("\nIniciando compilação e gravação de patches/heavy.pd…\n\n")
+        command = [str(PIKOPD_LAUNCHER), DEMO_PATCH, DEMO_PROJECT, "-f"]
+        threading.Thread(
+            target=run_command,
+            args=("flash", command, PIKOPD_DIR),
+            daemon=True,
+        ).start()
 
     def poll_messages() -> None:
         while True:
@@ -202,26 +260,40 @@ def main() -> int:
             if kind == "output":
                 append_output(str(value))
             elif kind == "finished":
-                code = int(value)
+                action, return_code = value
+                code = int(return_code)
                 install_button.configure(state="normal")
-                if code == 0:
-                    status.set("Instalação concluída.")
+                if action == "install" and code == 0:
+                    status.set("Instalação concluída. Coloque o Pico em modo BOOTSEL e use Run / Flash.")
                     append_output("\nInstalação concluída com sucesso.\n")
-                    messagebox.showinfo("PikoPD Setup", "Instalação concluída com sucesso.")
+                    install_button.configure(text="Run / Flash", command=start_flash)
+                    messagebox.showinfo(
+                        "PikoPD Setup",
+                        "Instalação concluída. Conecte o Pico em modo BOOTSEL e clique em Run / Flash para compilar e gravar heavy.pd.",
+                    )
+                elif action == "flash" and code == 0:
+                    status.set("heavy.pd foi compilado e gravado no Pico.")
+                    append_output("\nFirmware compilado e gravado com sucesso.\n")
+                    messagebox.showinfo("PikoPD Setup", "Firmware compilado e gravado com sucesso.")
                 else:
-                    status.set(f"A instalação terminou com erro (código {code}).")
-                    append_output(f"\nO instalador terminou com código {code}.\n")
+                    operation = "instalação" if action == "install" else "Run / Flash"
+                    status.set(f"A operação {operation} terminou com erro (código {code}).")
+                    append_output(f"\nA operação terminou com código {code}.\n")
                     messagebox.showerror(
                         "PikoPD Setup",
-                        "A instalação falhou. Consulte a saída na janela para ver o erro.",
+                        "A operação falhou. Consulte a saída na janela para ver o erro.",
                     )
             elif kind == "launch_error":
+                action, error = value
                 install_button.configure(state="normal")
-                status.set("Não foi possível iniciar o instalador.")
-                append_output(f"\nErro ao iniciar: {value}\n")
+                status.set("Não foi possível iniciar a operação.")
+                append_output(f"\nErro ao iniciar: {error}\n")
         root.after(100, poll_messages)
 
-    install_button.configure(command=start_install)
+    if already_installed:
+        install_button.configure(command=start_flash)
+    else:
+        install_button.configure(command=start_install)
     root.after(100, poll_messages)
     root.mainloop()
     return 0
