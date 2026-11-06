@@ -1,0 +1,231 @@
+#!/usr/bin/env python3
+"""Small graphical front end for install-ubuntu.sh."""
+
+from __future__ import annotations
+
+import os
+import queue
+import re
+import shutil
+import subprocess
+import sys
+import threading
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parent
+INSTALLER = ROOT / "install-ubuntu.sh"
+ANSI_ESCAPE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))")
+
+
+def ensure_tkinter() -> None:
+    try:
+        import tkinter  # noqa: F401
+        return
+    except ImportError:
+        pass
+
+    pkexec = shutil.which("pkexec")
+    if not pkexec:
+        raise RuntimeError(
+            "O Python Tk não está instalado e pkexec não foi encontrado.\n"
+            "Instale com: sudo apt install python3-tk"
+        )
+
+    result = subprocess.run([pkexec, "apt-get", "install", "-y", "python3-tk"])
+    if result.returncode != 0:
+        raise RuntimeError("Não foi possível instalar python3-tk para abrir a janela.")
+
+    os.execv(sys.executable, [sys.executable, str(Path(__file__).resolve()), *sys.argv[1:]])
+
+
+def main() -> int:
+    try:
+        ensure_tkinter()
+    except RuntimeError as error:
+        print(error, file=sys.stderr)
+        return 1
+
+    import tkinter as tk
+    from tkinter import messagebox, ttk
+
+    if not INSTALLER.is_file():
+        messagebox.showerror("PikoSetup", f"Não encontrei o instalador:\n{INSTALLER}")
+        return 1
+
+    root = tk.Tk()
+    root.title("PikoPD Setup")
+    root.geometry("760x560")
+    root.minsize(600, 440)
+
+    colors = {
+        "background": "#17191f",
+        "surface": "#22252d",
+        "input": "#101217",
+        "text": "#edf0f5",
+        "muted": "#b2b8c4",
+        "accent": "#6c8cff",
+        "accent_active": "#829dff",
+        "disabled": "#565d6b",
+    }
+    style = ttk.Style(root)
+    try:
+        style.theme_use("clam")
+    except tk.TclError:
+        pass
+    root.configure(background=colors["background"])
+    style.configure("TFrame", background=colors["background"])
+    style.configure("TLabel", background=colors["background"], foreground=colors["text"])
+    style.configure(
+        "Title.TLabel",
+        background=colors["background"],
+        foreground=colors["text"],
+        font=("TkDefaultFont", 16, "bold"),
+    )
+    style.configure(
+        "Vertical.TScrollbar",
+        background=colors["surface"],
+        troughcolor=colors["input"],
+        bordercolor=colors["input"],
+        arrowcolor=colors["text"],
+    )
+
+    outer = ttk.Frame(root, padding=16)
+    outer.grid(row=0, column=0, sticky="nsew")
+    root.columnconfigure(0, weight=1)
+    root.rowconfigure(0, weight=1)
+    outer.columnconfigure(0, weight=1)
+    outer.rowconfigure(2, weight=1)
+
+    ttk.Label(outer, text="Instalador do PikoPD", style="Title.TLabel").grid(
+        row=0, column=0, sticky="w"
+    )
+    ttk.Label(
+        outer,
+        text="Instala as dependências e prepara o ambiente para compilar patches Pure Data para Raspberry Pi Pico.",
+        wraplength=700,
+    ).grid(row=1, column=0, sticky="w", pady=(6, 14))
+
+    log_frame = ttk.Frame(outer)
+    log_frame.grid(row=2, column=0, sticky="nsew")
+    output = tk.Text(
+        log_frame,
+        wrap="word",
+        state="disabled",
+        font=("monospace", 9),
+        background=colors["input"],
+        foreground=colors["text"],
+        insertbackground=colors["text"],
+        selectbackground=colors["accent"],
+        relief="flat",
+        padx=10,
+        pady=10,
+    )
+    scrollbar = ttk.Scrollbar(log_frame, orient="vertical", command=output.yview)
+    output.configure(yscrollcommand=scrollbar.set)
+    output.pack(side="left", fill="both", expand=True)
+    scrollbar.pack(side="right", fill="y")
+
+    status = tk.StringVar(value="Pronto para instalar.")
+    ttk.Label(outer, textvariable=status, wraplength=700).grid(
+        row=3, column=0, sticky="w", pady=(12, 8)
+    )
+    button_row = ttk.Frame(outer)
+    button_row.grid(row=4, column=0, sticky="ew", pady=(4, 18))
+    button_row.columnconfigure(0, weight=1)
+    install_button = tk.Button(
+        button_row,
+        text="Instalar",
+        width=16,
+        height=2,
+        padx=18,
+        pady=10,
+        background=colors["accent"],
+        foreground="#ffffff",
+        activebackground=colors["accent_active"],
+        activeforeground="#ffffff",
+        disabledforeground=colors["muted"],
+        relief="flat",
+        borderwidth=0,
+        highlightthickness=0,
+        font=("TkDefaultFont", 10, "bold"),
+        cursor="hand2",
+    )
+    install_button.grid(row=0, column=0, sticky="e", padx=4, pady=2)
+
+    messages: queue.Queue[tuple[str, object]] = queue.Queue()
+    process: subprocess.Popen[bytes] | None = None
+
+    def append_output(chunk: str) -> None:
+        clean = ANSI_ESCAPE.sub("", chunk).replace("\r", "\n")
+        output.configure(state="normal")
+        output.insert("end", clean)
+        output.see("end")
+        output.configure(state="disabled")
+
+    def run_install() -> None:
+        nonlocal process
+        environment = os.environ.copy()
+        environment["PIKOPD_GUI"] = "1"
+        environment["PYTHONUNBUFFERED"] = "1"
+        try:
+            process = subprocess.Popen(
+                [str(INSTALLER)],
+                cwd=ROOT,
+                env=environment,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                bufsize=0,
+            )
+            assert process.stdout is not None
+            while True:
+                chunk = os.read(process.stdout.fileno(), 4096)
+                if not chunk:
+                    break
+                messages.put(("output", chunk.decode("utf-8", errors="replace")))
+            messages.put(("finished", process.wait()))
+        except Exception as error:  # Report launch errors in the window.
+            messages.put(("launch_error", str(error)))
+
+    def start_install() -> None:
+        install_button.configure(state="disabled")
+        status.set("Instalando… A autenticação administrativa pode abrir outra janela.")
+        append_output("Iniciando o instalador…\n\n")
+        threading.Thread(target=run_install, daemon=True).start()
+
+    def poll_messages() -> None:
+        while True:
+            try:
+                kind, value = messages.get_nowait()
+            except queue.Empty:
+                break
+            if kind == "output":
+                append_output(str(value))
+            elif kind == "finished":
+                code = int(value)
+                install_button.configure(state="normal")
+                if code == 0:
+                    status.set("Instalação concluída.")
+                    append_output("\nInstalação concluída com sucesso.\n")
+                    messagebox.showinfo("PikoPD Setup", "Instalação concluída com sucesso.")
+                else:
+                    status.set(f"A instalação terminou com erro (código {code}).")
+                    append_output(f"\nO instalador terminou com código {code}.\n")
+                    messagebox.showerror(
+                        "PikoPD Setup",
+                        "A instalação falhou. Consulte a saída na janela para ver o erro.",
+                    )
+            elif kind == "launch_error":
+                install_button.configure(state="normal")
+                status.set("Não foi possível iniciar o instalador.")
+                append_output(f"\nErro ao iniciar: {value}\n")
+        root.after(100, poll_messages)
+
+    install_button.configure(command=start_install)
+    root.after(100, poll_messages)
+    root.mainloop()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
