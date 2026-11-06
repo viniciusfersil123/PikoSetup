@@ -1,62 +1,62 @@
 # PikoSetup
 
-Instalador inicial do ambiente de desenvolvimento **PikoPD para Ubuntu**. Ele parte de uma instalação Ubuntu sem as dependências do manual e prepara as ferramentas para compilar patches Pure Data (`.pd`) em firmware UF2 para Raspberry Pi Pico.
+An Ubuntu installer for the **PikoPD** toolchain. It prepares a clean Ubuntu system to build Pure Data (`.pd`) patches into UF2 firmware for Raspberry Pi Pico.
 
-## Instalação
+## Install
 
-Na pasta deste repositório, abra o instalador gráfico:
+Open the graphical installer from this repository:
 
 ```bash
 ./piko-setup
 ```
 
-A janela tem um botão **Instalar** e mostra a saída do instalador enquanto ele trabalha. Depois de uma instalação bem-sucedida, o botão vira **Run / Flash**: ele compila `patches/heavy.pd` e grava o firmware no Pico. Antes de clicar, conecte a placa em modo BOOTSEL e confirme a gravação na janela. A autenticação administrativa é solicitada pelo diálogo do Ubuntu. Se Tkinter ainda não estiver instalado, o lançador solicita autorização para instalar `python3-tk` antes de abrir a janela.
+The window has an **Install** button and displays the installer's output. After a successful installation, the button changes to **Run / Flash**. Use **Browse…** to choose a Pure Data patch and a board configuration JSON file. The selections are saved in `~/.config/pikosetup/preferences.json` and remain selected when you reopen the program, until you change them. **Run / Flash** builds the selected patch and flashes the firmware to the Pico. Connect the board in BOOTSEL mode and confirm the flash in the dialog. Ubuntu's authorization dialog handles administrative access. If Tkinter is missing, the launcher asks for authorization to install `python3-tk` before opening the window.
 
-Em aberturas futuras, se detectar que as dependências e o ambiente PikoPD continuam instalados, o programa abre direto com **Run / Flash**.
+On future launches, the app checks whether the toolchain is installed. If it is, the window opens directly with **Run / Flash**.
 
-Também é possível executar diretamente no terminal:
+You can also run the installer from a terminal:
 
 ```bash
 ./install-ubuntu.sh
 ```
 
-O instalador solicitará autorização administrativa nas etapas que precisam dela, incluindo os pacotes do Ubuntu e a instalação do `picotool`. Execute como usuário normal, sem `sudo` no comando do instalador. É necessária conexão com a internet.
+Run it as your normal user, without `sudo`. It will request administrator authorization when needed. An internet connection is required.
 
-O `apt-get update` consulta também os repositórios de terceiros já configurados no Ubuntu. Se o único erro for a chave ausente deste repositório específico do VirtualBox (`NO_PUBKEY A2F683C52980AECF`), o instalador avisa e continua usando os índices oficiais do Ubuntu. Ele não instala nem altera o VirtualBox. Outros erros do APT interrompem a instalação.
+`apt-get update` checks all APT repositories already configured on the system. If its only error is the missing VirtualBox key (`NO_PUBKEY A2F683C52980AECF`), the installer warns and continues using the Ubuntu package indexes. It does not install or change VirtualBox. Other APT errors stop the installation.
 
-Por padrão, os arquivos ficam em `~/piko-workspace`. Para escolher outra pasta:
+By default, the toolchain is installed in `~/piko-workspace`. To use a different folder:
 
 ```bash
-PIKO_HOME="$HOME/Documentos/PikoPD" ./install-ubuntu.sh
+PIKO_HOME="$HOME/Documents/PikoPD" ./install-ubuntu.sh
 ```
 
-## O que é instalado
+## Installed components
 
-- Pacotes Ubuntu para compilação, CMake, Ninja, Git, Python 3 e compilador ARM `arm-none-eabi`.
-- Interface gráfica do instalador baseada em Python Tk.
-- Repositório PikoPD e seus exemplos.
-- Raspberry Pi Pico SDK e pico-extras, com submódulos Git inicializados.
-- hvcc e Jinja2 dentro de um ambiente virtual Python isolado.
-- picotool compilado e instalado no sistema.
-- Variável `PICO_SDK_PATH` salva no arquivo de inicialização do shell detectado (Bash, Zsh ou Fish) e um lançador `pikopd` na pasta de instalação.
+- Ubuntu build packages, CMake, Ninja, Git, Python 3, and the `arm-none-eabi` compiler.
+- The PikoSetup graphical interface, built with Python Tk.
+- The PikoPD repository and example patches.
+- Raspberry Pi Pico SDK and pico-extras, including their Git submodules.
+- hvcc and Jinja2 in an isolated Python virtual environment.
+- picotool, built and installed on the system.
+- `PICO_SDK_PATH` in the detected shell's startup file (Bash, Zsh, or Fish), plus a `pikopd` launcher in the workspace.
 
-## Compilar um patch
+## Build a patch from the terminal
 
-O instalador mostra o comando `source` apropriado ao final. Execute-o no terminal atual ou abra um novo terminal para carregar `PICO_SDK_PATH`. Depois, compile um patch:
+After installation, open a new terminal or run the `source` command printed by the installer. Then:
 
 ```bash
 cd ~/piko-workspace/pikoPD
-../pikopd patches/heavy.pd meu_projeto
+../pikopd patches/heavy.pd my_project
 ```
 
-O script do PikoPD gera o projeto e compila o firmware. O arquivo UF2 fica na pasta `project/build` dentro da pasta de projeto criada. Para gravar, conecte o Pico em modo BOOTSEL e acrescente `-f` ao comando, conforme as opções do manual:
+The generated UF2 file is in the new project's `build` folder. To flash from the terminal, connect the Pico in BOOTSEL mode and add `-f`:
 
 ```bash
-../pikopd patches/heavy.pd meu_projeto -f
+../pikopd patches/heavy.pd my_project -f
 ```
 
-## Escopo desta versão
+## Scope
 
-O instalador cobre o ambiente de compilação descrito no manual para Ubuntu. Ele não instala Pure Data nem PlugData, não configura hardware ou `board.json`, e não instala a ferramenta web de configuração. A opção de monitor serial `-s` do script upstream usa atualmente caminhos e integração de Terminal específicos do macOS; por isso, não é configurada como recurso Ubuntu por este instalador.
+This installer prepares the Ubuntu build environment. It does not install Pure Data or PlugData, configure hardware or `board.json`, or install the web configuration tool. The upstream `-s` serial monitor currently uses macOS-specific Terminal integration, so it is not configured for Ubuntu.
 
-O instalador pode ser executado novamente para atualizar os repositórios e completar a instalação. Em checkouts com alterações locais, ele preserva os arquivos e não tenta atualizar aquele repositório. Se uma pasta de destino existir e não for um checkout Git, o script para sem apagá-la.
+You can rerun the installer to update repositories and complete setup. If a checkout has local changes, the installer preserves them and skips updating that checkout. If a destination folder exists but is not a Git checkout, the installer stops without deleting it.

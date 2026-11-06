@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 import queue
+import json
 import re
 import shutil
 import subprocess
@@ -20,8 +21,27 @@ PIKOPD_DIR = PIKO_HOME / "pikoPD"
 PIKOPD_LAUNCHER = PIKO_HOME / "pikopd"
 DEMO_PATCH = "patches/heavy.pd"
 DEMO_PROJECT = "piko_setup_heavy"
+PREFERENCES_FILE = Path.home() / ".config" / "pikosetup" / "preferences.json"
 ANSI_ESCAPE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))")
 os.environ["PATH"] = f"/usr/local/bin:{os.environ.get('PATH', '')}"
+
+
+def load_preferences() -> dict[str, str]:
+    try:
+        value = json.loads(PREFERENCES_FILE.read_text(encoding="utf-8"))
+        if isinstance(value, dict):
+            return value
+    except (OSError, json.JSONDecodeError):
+        pass
+    return {}
+
+
+def save_preferences(patch_path: str, board_path: str) -> None:
+    PREFERENCES_FILE.parent.mkdir(parents=True, exist_ok=True)
+    PREFERENCES_FILE.write_text(
+        json.dumps({"patch": patch_path, "board": board_path}, indent=2) + "\n",
+        encoding="utf-8",
+    )
 
 
 def installation_is_ready() -> bool:
@@ -49,13 +69,13 @@ def ensure_tkinter() -> None:
     pkexec = shutil.which("pkexec")
     if not pkexec:
         raise RuntimeError(
-            "O Python Tk não está instalado e pkexec não foi encontrado.\n"
-            "Instale com: sudo apt install python3-tk"
+            "Python Tk is not installed and pkexec was not found.\n"
+            "Install it with: sudo apt install python3-tk"
         )
 
     result = subprocess.run([pkexec, "apt-get", "install", "-y", "python3-tk"])
     if result.returncode != 0:
-        raise RuntimeError("Não foi possível instalar python3-tk para abrir a janela.")
+        raise RuntimeError("Could not install python3-tk to open the window.")
 
     os.execv(sys.executable, [sys.executable, str(Path(__file__).resolve()), *sys.argv[1:]])
 
@@ -68,17 +88,28 @@ def main() -> int:
         return 1
 
     import tkinter as tk
-    from tkinter import messagebox, ttk
+    from tkinter import filedialog, messagebox, ttk
 
     if not INSTALLER.is_file():
-        messagebox.showerror("PikoSetup", f"Não encontrei o instalador:\n{INSTALLER}")
+        messagebox.showerror("PikoSetup", f"Installer not found:\n{INSTALLER}")
         return 1
 
     root = tk.Tk()
     root.title("PikoPD Setup")
-    root.geometry("760x560")
-    root.minsize(600, 440)
+    screen_width = root.winfo_screenwidth()
+    screen_height = root.winfo_screenheight()
+    window_width = min(820, max(600, screen_width - 40))
+    window_height = min(700, max(540, screen_height - 80))
+    root.geometry(f"{window_width}x{window_height}")
+    root.minsize(min(600, window_width), min(520, window_height))
     already_installed = installation_is_ready()
+    preferences = load_preferences()
+    selected_patch = tk.StringVar(
+        value=preferences.get("patch", str(PIKOPD_DIR / DEMO_PATCH))
+    )
+    selected_board = tk.StringVar(
+        value=preferences.get("board", str(PIKOPD_DIR / "board.json"))
+    )
 
     colors = {
         "background": "#17191f",
@@ -117,24 +148,100 @@ def main() -> int:
     root.columnconfigure(0, weight=1)
     root.rowconfigure(0, weight=1)
     outer.columnconfigure(0, weight=1)
-    outer.rowconfigure(2, weight=1)
+    outer.rowconfigure(3, weight=1)
+    path_wraplength = max(240, min(500, screen_width - 360))
 
-    ttk.Label(outer, text="Instalador do PikoPD", style="Title.TLabel").grid(
+    ttk.Label(outer, text="PikoPD Installer", style="Title.TLabel").grid(
         row=0, column=0, sticky="w"
     )
     ttk.Label(
         outer,
-        text="Instala as dependências e prepara o ambiente para compilar patches Pure Data para Raspberry Pi Pico.",
+        text="Install the toolchain and prepare the environment to build Pure Data patches for Raspberry Pi Pico.",
         wraplength=700,
     ).grid(row=1, column=0, sticky="w", pady=(6, 14))
 
+    selection_frame = ttk.Frame(outer)
+    selection_frame.grid(row=2, column=0, sticky="ew", pady=(0, 12))
+    selection_frame.columnconfigure(1, weight=1)
+
+    def browse_patch() -> None:
+        current = Path(selected_patch.get()).expanduser()
+        initial_dir = current.parent if current.parent.is_dir() else PIKOPD_DIR
+        if not initial_dir.is_dir():
+            initial_dir = Path.home()
+        path = filedialog.askopenfilename(
+            title="Select a Pure Data patch",
+            initialdir=str(initial_dir),
+            filetypes=[("Pure Data patches", "*.pd"), ("All files", "*.*")],
+        )
+        if path:
+            selected_patch.set(str(Path(path).resolve()))
+            save_preferences(selected_patch.get(), selected_board.get())
+
+    def browse_board() -> None:
+        current = Path(selected_board.get()).expanduser()
+        initial_dir = current.parent if current.parent.is_dir() else PIKOPD_DIR
+        if not initial_dir.is_dir():
+            initial_dir = Path.home()
+        path = filedialog.askopenfilename(
+            title="Select a board configuration",
+            initialdir=str(initial_dir),
+            filetypes=[("JSON configuration", "*.json"), ("All files", "*.*")],
+        )
+        if path:
+            selected_board.set(str(Path(path).resolve()))
+            save_preferences(selected_patch.get(), selected_board.get())
+
+    ttk.Label(selection_frame, text="Pure Data patch (.pd)").grid(
+        row=0, column=0, sticky="w", padx=(0, 12), pady=5
+    )
+    ttk.Label(
+        selection_frame, textvariable=selected_patch, wraplength=path_wraplength
+    ).grid(row=0, column=1, sticky="w", pady=5)
+    tk.Button(
+        selection_frame,
+        text="Browse…",
+        command=browse_patch,
+        background=colors["surface"],
+        foreground=colors["text"],
+        activebackground=colors["accent_active"],
+        activeforeground="#ffffff",
+        relief="flat",
+        borderwidth=0,
+        padx=12,
+        pady=6,
+        cursor="hand2",
+    ).grid(row=0, column=2, padx=(12, 0), pady=3)
+
+    ttk.Label(selection_frame, text="Board configuration (.json)").grid(
+        row=1, column=0, sticky="w", padx=(0, 12), pady=5
+    )
+    ttk.Label(
+        selection_frame, textvariable=selected_board, wraplength=path_wraplength
+    ).grid(row=1, column=1, sticky="w", pady=5)
+    tk.Button(
+        selection_frame,
+        text="Browse…",
+        command=browse_board,
+        background=colors["surface"],
+        foreground=colors["text"],
+        activebackground=colors["accent_active"],
+        activeforeground="#ffffff",
+        relief="flat",
+        borderwidth=0,
+        padx=12,
+        pady=6,
+        cursor="hand2",
+    ).grid(row=1, column=2, padx=(12, 0), pady=3)
+
     log_frame = ttk.Frame(outer)
-    log_frame.grid(row=2, column=0, sticky="nsew")
+    log_frame.grid(row=3, column=0, sticky="nsew")
     output = tk.Text(
         log_frame,
         wrap="word",
         state="disabled",
         font=("monospace", 9),
+        height=14,
         background=colors["input"],
         foreground=colors["text"],
         insertbackground=colors["text"],
@@ -150,20 +257,20 @@ def main() -> int:
 
     status = tk.StringVar(
         value=(
-            "Instalação detectada. Conecte o Pico em modo BOOTSEL para gravar."
+            "Installation detected. Select your files, connect the Pico in BOOTSEL mode, then click Run / Flash."
             if already_installed
-            else "Pronto para instalar."
+            else "Ready to install. You can choose your patch and board configuration now."
         )
     )
     ttk.Label(outer, textvariable=status, wraplength=700).grid(
-        row=3, column=0, sticky="w", pady=(12, 8)
+        row=4, column=0, sticky="w", pady=(12, 8)
     )
     button_row = ttk.Frame(outer)
-    button_row.grid(row=4, column=0, sticky="ew", pady=(4, 18))
+    button_row.grid(row=5, column=0, sticky="ew", pady=(4, 18))
     button_row.columnconfigure(0, weight=1)
     install_button = tk.Button(
         button_row,
-        text="Run / Flash" if already_installed else "Instalar",
+        text="Run / Flash" if already_installed else "Install",
         width=16,
         height=2,
         padx=18,
@@ -218,8 +325,8 @@ def main() -> int:
 
     def start_install() -> None:
         install_button.configure(state="disabled")
-        status.set("Instalando… A autenticação administrativa pode abrir outra janela.")
-        append_output("Iniciando o instalador…\n\n")
+        status.set("Installing… An Ubuntu authorization dialog may open.")
+        append_output("Starting installer…\n\n")
         threading.Thread(
             target=run_command,
             args=("install", [str(INSTALLER)], ROOT, True),
@@ -227,24 +334,38 @@ def main() -> int:
         ).start()
 
     def start_flash() -> None:
-        if not PIKOPD_LAUNCHER.is_file() or not (PIKOPD_DIR / DEMO_PATCH).is_file():
+        patch_path = Path(selected_patch.get()).expanduser()
+        board_path = Path(selected_board.get()).expanduser()
+        if not patch_path.is_file():
+            messagebox.showerror("PikoPD Setup", f"Patch file not found:\n{patch_path}")
+            return
+        if not board_path.is_file():
+            messagebox.showerror("PikoPD Setup", f"Board configuration not found:\n{board_path}")
+            return
+        if not PIKOPD_LAUNCHER.is_file():
             messagebox.showerror(
                 "PikoPD Setup",
-                f"Não encontrei o lançador ou o patch de exemplo.\n\n"
-                f"Lançador: {PIKOPD_LAUNCHER}\nPatch: {PIKOPD_DIR / DEMO_PATCH}",
+                f"PikoPD launcher not found:\n{PIKOPD_LAUNCHER}",
             )
             return
         if not messagebox.askyesno(
-            "Gravar firmware no Pico",
-            "Conecte o Raspberry Pi Pico em modo BOOTSEL.\n\n"
-            "O exemplo patches/heavy.pd será compilado e gravado no dispositivo.\n"
-            "Deseja continuar?",
+            "Flash firmware to Pico",
+            "Connect the Raspberry Pi Pico in BOOTSEL mode.\n\n"
+            f"This will compile {patch_path.name} using {board_path.name} and flash the device.\n"
+            "Continue?",
         ):
             return
         install_button.configure(state="disabled")
-        status.set("Compilando heavy.pd e gravando no Pico…")
-        append_output("\nIniciando compilação e gravação de patches/heavy.pd…\n\n")
-        command = [str(PIKOPD_LAUNCHER), DEMO_PATCH, DEMO_PROJECT, "-f"]
+        status.set(f"Building {patch_path.name} and flashing the Pico…")
+        append_output(f"\nBuilding and flashing {patch_path}…\n\n")
+        command = [
+            str(PIKOPD_LAUNCHER),
+            str(patch_path.resolve()),
+            DEMO_PROJECT,
+            "-b",
+            str(board_path.resolve()),
+            "-f",
+        ]
         threading.Thread(
             target=run_command,
             args=("flash", command, PIKOPD_DIR),
@@ -264,30 +385,30 @@ def main() -> int:
                 code = int(return_code)
                 install_button.configure(state="normal")
                 if action == "install" and code == 0:
-                    status.set("Instalação concluída. Coloque o Pico em modo BOOTSEL e use Run / Flash.")
-                    append_output("\nInstalação concluída com sucesso.\n")
+                    status.set("Installation complete. Select your files, then use Run / Flash.")
+                    append_output("\nInstallation completed successfully.\n")
                     install_button.configure(text="Run / Flash", command=start_flash)
                     messagebox.showinfo(
                         "PikoPD Setup",
-                        "Instalação concluída. Conecte o Pico em modo BOOTSEL e clique em Run / Flash para compilar e gravar heavy.pd.",
+                        "Installation complete. Select a patch and board configuration, connect the Pico in BOOTSEL mode, then click Run / Flash.",
                     )
                 elif action == "flash" and code == 0:
-                    status.set("heavy.pd foi compilado e gravado no Pico.")
-                    append_output("\nFirmware compilado e gravado com sucesso.\n")
-                    messagebox.showinfo("PikoPD Setup", "Firmware compilado e gravado com sucesso.")
+                    status.set(f"{Path(selected_patch.get()).name} was built and flashed to the Pico.")
+                    append_output("\nFirmware built and flashed successfully.\n")
+                    messagebox.showinfo("PikoPD Setup", "Firmware built and flashed successfully.")
                 else:
-                    operation = "instalação" if action == "install" else "Run / Flash"
-                    status.set(f"A operação {operation} terminou com erro (código {code}).")
-                    append_output(f"\nA operação terminou com código {code}.\n")
+                    operation = "installation" if action == "install" else "Run / Flash"
+                    status.set(f"The {operation} operation failed (exit code {code}).")
+                    append_output(f"\nOperation finished with exit code {code}.\n")
                     messagebox.showerror(
                         "PikoPD Setup",
-                        "A operação falhou. Consulte a saída na janela para ver o erro.",
+                        "The operation failed. Check the output above for details.",
                     )
             elif kind == "launch_error":
                 action, error = value
                 install_button.configure(state="normal")
-                status.set("Não foi possível iniciar a operação.")
-                append_output(f"\nErro ao iniciar: {error}\n")
+                status.set("Could not start the operation.")
+                append_output(f"\nCould not start: {error}\n")
         root.after(100, poll_messages)
 
     if already_installed:
