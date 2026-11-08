@@ -1,0 +1,63 @@
+{
+  "name": "heavy",
+  "pico_board": "pico",
+  "core_freq": 240000,
+  "audio_mode": "I2S",
+  "sample_rate": 48000,
+  "channel": 2,
+  "buffer_size": 64,
+  "i2s_data_pin": 20,
+  "i2s_bclk_pin": 18,
+  "i2s_lrclk_pin": 19,
+  "pwm_pin": 10,
+  "voice_count": 1,
+  "midi_mode": "usb",
+  "console": true,
+
+  "inputs": {
+    "adc_pins": [
+      { "name": "knob", "pin": 28, "type": "knob" }
+    ],
+
+    "buttons": [
+    ],
+
+    "gate_in": [],
+
+    "encoders": [],
+
+    "joystick": [
+
+    ],
+
+    "sensors": {
+      "cny70": [],
+
+      "mpr121": [],
+
+      "hc-sr04": [],
+
+      "hx710": []
+    }
+  },
+
+  "outputs": {
+    "gate_out": [],
+    "mcp4725": []
+  },
+
+  "leds": [
+    { "name": "status", "pin": 25, "mode": "status" }
+  ],
+
+  "masterfx": {
+    "delay": false,
+    "reverb": false,
+    "limiter": true
+  },
+
+  "display": {},
+
+  "web": {},
+  "sta": {}
+}

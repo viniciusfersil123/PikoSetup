@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Small graphical front end for install-ubuntu.sh."""
+"""Small graphical front end for the platform-specific PikoPD installers."""
 
 from __future__ import annotations
 
@@ -15,7 +15,10 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent
-INSTALLER = ROOT / "install-ubuntu.sh"
+INSTALLERS = {
+    "Linux (Ubuntu)": ROOT / "install-ubuntu.sh",
+    "macOS": ROOT / "install-mac.sh",
+}
 PIKO_HOME = Path(os.environ.get("PIKO_HOME") or Path.home() / "piko-workspace").expanduser().resolve()
 PIKOPD_DIR = PIKO_HOME / "pikoPD"
 PIKOPD_LAUNCHER = PIKO_HOME / "pikopd"
@@ -23,7 +26,7 @@ DEMO_PATCH = "patches/heavy.pd"
 DEMO_PROJECT = "piko_setup_heavy"
 PREFERENCES_FILE = Path.home() / ".config" / "pikosetup" / "preferences.json"
 ANSI_ESCAPE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))")
-os.environ["PATH"] = f"/usr/local/bin:{os.environ.get('PATH', '')}"
+os.environ["PATH"] = f"/opt/homebrew/bin:/usr/local/bin:{os.environ.get('PATH', '')}"
 
 
 def load_preferences() -> dict[str, str]:
@@ -36,10 +39,10 @@ def load_preferences() -> dict[str, str]:
     return {}
 
 
-def save_preferences(patch_path: str, board_path: str) -> None:
+def save_preferences(patch_path: str, board_path: str, platform: str) -> None:
     PREFERENCES_FILE.parent.mkdir(parents=True, exist_ok=True)
     PREFERENCES_FILE.write_text(
-        json.dumps({"patch": patch_path, "board": board_path}, indent=2) + "\n",
+        json.dumps({"patch": patch_path, "board": board_path, "platform": platform}, indent=2) + "\n",
         encoding="utf-8",
     )
 
@@ -66,6 +69,11 @@ def ensure_tkinter() -> None:
     except ImportError:
         pass
 
+    if sys.platform == "darwin":
+        raise RuntimeError(
+            "Python Tk is not installed. Install Python with Tk support, then run piko-setup again."
+        )
+
     pkexec = shutil.which("pkexec")
     if not pkexec:
         raise RuntimeError(
@@ -90,9 +98,7 @@ def main() -> int:
     import tkinter as tk
     from tkinter import filedialog, messagebox, ttk
 
-    if not INSTALLER.is_file():
-        messagebox.showerror("PikoSetup", f"Installer not found:\n{INSTALLER}")
-        return 1
+    available_platform = "macOS" if sys.platform == "darwin" else "Linux (Ubuntu)"
 
     root = tk.Tk()
     root.title("PikoPD Setup")
@@ -104,6 +110,11 @@ def main() -> int:
     root.minsize(min(600, window_width), min(520, window_height))
     already_installed = installation_is_ready()
     preferences = load_preferences()
+    selected_platform = tk.StringVar(
+        value=preferences.get("platform", available_platform)
+    )
+    if selected_platform.get() not in INSTALLERS:
+        selected_platform.set(available_platform)
     selected_patch = tk.StringVar(
         value=preferences.get("patch", str(PIKOPD_DIR / DEMO_PATCH))
     )
@@ -148,7 +159,7 @@ def main() -> int:
     root.columnconfigure(0, weight=1)
     root.rowconfigure(0, weight=1)
     outer.columnconfigure(0, weight=1)
-    outer.rowconfigure(3, weight=1)
+    outer.rowconfigure(4, weight=1)
     path_wraplength = max(240, min(500, screen_width - 360))
 
     ttk.Label(outer, text="PikoPD Installer", style="Title.TLabel").grid(
@@ -160,8 +171,25 @@ def main() -> int:
         wraplength=700,
     ).grid(row=1, column=0, sticky="w", pady=(6, 14))
 
+    platform_frame = ttk.Frame(outer)
+    platform_frame.grid(row=2, column=0, sticky="w", pady=(0, 8))
+    ttk.Label(platform_frame, text="Operating system").pack(side="left", padx=(0, 10))
+    platform_picker = ttk.Combobox(
+        platform_frame,
+        textvariable=selected_platform,
+        values=tuple(INSTALLERS),
+        state="readonly",
+        width=18,
+    )
+    platform_picker.pack(side="left")
+
+    def save_platform_preference(_event: object = None) -> None:
+        save_preferences(selected_patch.get(), selected_board.get(), selected_platform.get())
+
+    platform_picker.bind("<<ComboboxSelected>>", save_platform_preference)
+
     selection_frame = ttk.Frame(outer)
-    selection_frame.grid(row=2, column=0, sticky="ew", pady=(0, 12))
+    selection_frame.grid(row=3, column=0, sticky="ew", pady=(0, 12))
     selection_frame.columnconfigure(1, weight=1)
 
     def browse_patch() -> None:
@@ -176,7 +204,7 @@ def main() -> int:
         )
         if path:
             selected_patch.set(str(Path(path).resolve()))
-            save_preferences(selected_patch.get(), selected_board.get())
+            save_preferences(selected_patch.get(), selected_board.get(), selected_platform.get())
 
     def browse_board() -> None:
         current = Path(selected_board.get()).expanduser()
@@ -190,7 +218,7 @@ def main() -> int:
         )
         if path:
             selected_board.set(str(Path(path).resolve()))
-            save_preferences(selected_patch.get(), selected_board.get())
+            save_preferences(selected_patch.get(), selected_board.get(), selected_platform.get())
 
     ttk.Label(selection_frame, text="Pure Data patch (.pd)").grid(
         row=0, column=0, sticky="w", padx=(0, 12), pady=5
@@ -235,7 +263,7 @@ def main() -> int:
     ).grid(row=1, column=2, padx=(12, 0), pady=3)
 
     log_frame = ttk.Frame(outer)
-    log_frame.grid(row=3, column=0, sticky="nsew")
+    log_frame.grid(row=4, column=0, sticky="nsew")
     output = tk.Text(
         log_frame,
         wrap="word",
@@ -263,10 +291,10 @@ def main() -> int:
         )
     )
     ttk.Label(outer, textvariable=status, wraplength=700).grid(
-        row=4, column=0, sticky="w", pady=(12, 8)
+        row=5, column=0, sticky="w", pady=(12, 8)
     )
     button_row = ttk.Frame(outer)
-    button_row.grid(row=5, column=0, sticky="ew", pady=(4, 18))
+    button_row.grid(row=6, column=0, sticky="ew", pady=(4, 18))
     button_row.columnconfigure(0, weight=1)
     install_button = tk.Button(
         button_row,
@@ -324,12 +352,17 @@ def main() -> int:
             messages.put(("launch_error", (action, str(error))))
 
     def start_install() -> None:
+        installer = INSTALLERS[selected_platform.get()]
+        if not installer.is_file():
+            messagebox.showerror("PikoSetup", f"Installer not found:\n{installer}")
+            install_button.configure(state="normal")
+            return
         install_button.configure(state="disabled")
-        status.set("Installing… An Ubuntu authorization dialog may open.")
+        status.set("Installing…")
         append_output("Starting installer…\n\n")
         threading.Thread(
             target=run_command,
-            args=("install", [str(INSTALLER)], ROOT, True),
+            args=("install", [str(installer)], ROOT, selected_platform.get() == "Linux (Ubuntu)"),
             daemon=True,
         ).start()
 
