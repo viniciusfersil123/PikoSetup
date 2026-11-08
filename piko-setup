@@ -133,13 +133,30 @@ def main() -> int:
         "disabled": "#565d6b",
     }
     style = ttk.Style(root)
-    try:
-        style.theme_use("clam")
-    except tk.TclError:
-        pass
+    available_themes = style.theme_names()
+    for theme_name in ("clam", "classic"):
+        if theme_name in available_themes:
+            style.theme_use(theme_name)
+            break
     root.configure(background=colors["background"])
     style.configure("TFrame", background=colors["background"])
     style.configure("TLabel", background=colors["background"], foreground=colors["text"])
+    style.configure(
+        "TCombobox",
+        fieldbackground=colors["input"],
+        background=colors["surface"],
+        foreground=colors["text"],
+        arrowcolor=colors["text"],
+        selectbackground=colors["accent"],
+        selectforeground="#ffffff",
+    )
+    style.map(
+        "TCombobox",
+        fieldbackground=[("readonly", colors["input"])],
+        foreground=[("readonly", colors["text"])],
+        selectbackground=[("readonly", colors["input"])],
+        selectforeground=[("readonly", colors["text"])],
+    )
     style.configure(
         "Title.TLabel",
         background=colors["background"],
@@ -153,6 +170,12 @@ def main() -> int:
         bordercolor=colors["input"],
         arrowcolor=colors["text"],
     )
+    # Tk renders the readonly combobox menu as a separate classic Listbox.
+    # Give it the same high contrast as the rest of the dark interface.
+    root.option_add("*TCombobox*Listbox.background", colors["input"])
+    root.option_add("*TCombobox*Listbox.foreground", colors["text"])
+    root.option_add("*TCombobox*Listbox.selectBackground", colors["accent"])
+    root.option_add("*TCombobox*Listbox.selectForeground", "#ffffff")
 
     outer = ttk.Frame(root, padding=16)
     outer.grid(row=0, column=0, sticky="nsew")
