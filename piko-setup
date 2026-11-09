@@ -21,7 +21,11 @@ INSTALLERS = {
 }
 PIKO_HOME = Path(os.environ.get("PIKO_HOME") or Path.home() / "piko-workspace").expanduser().resolve()
 PIKOPD_DIR = PIKO_HOME / "pikoPD"
-PIKOPD_LAUNCHER = PIKO_HOME / "pikopd"
+PIKOPD_LAUNCHER = PIKO_HOME / "piko-run"
+# Keep existing installations usable when their legacy launcher is a file.
+# On case-insensitive macOS, "pikopd" is the pikoPD repository directory.
+if not PIKOPD_LAUNCHER.is_file() and (PIKO_HOME / "pikopd").is_file():
+    PIKOPD_LAUNCHER = PIKO_HOME / "pikopd"
 DEMO_PATCH = "patches/heavy.pd"
 DEMO_PROJECT = "piko_setup_heavy"
 PREFERENCES_FILE = Path.home() / ".config" / "pikosetup" / "preferences.json"
@@ -63,16 +67,39 @@ def installation_is_ready() -> bool:
 
 
 def ensure_tkinter() -> None:
+    if sys.platform == "darwin":
+        # The Apple Python ships obsolete Tk 8.5. Select a modern runtime
+        # before constructing any window, even when that old import succeeds.
+        probe = "import tkinter, sys; sys.exit(tkinter.TkVersion < 8.6)"
+        candidates = [
+            "/opt/homebrew/opt/python@3.13/bin/python3.13",
+            "/usr/local/opt/python@3.13/bin/python3.13",
+            sys.executable,
+        ]
+        for candidate in candidates:
+            if not Path(candidate).is_file():
+                continue
+            try:
+                result = subprocess.run(
+                    [candidate, "-c", probe], stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL, timeout=10,
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                continue
+            if result.returncode == 0:
+                if Path(candidate).resolve() != Path(sys.executable).resolve():
+                    os.execv(candidate, [candidate, str(Path(__file__).resolve()), *sys.argv[1:]])
+                return
+        bootstrap = ROOT / "piko-setup-mac.command"
+        if not bootstrap.is_file():
+            raise RuntimeError(f"Missing macOS launcher: {bootstrap}. Keep the project files together.")
+        os.execv("/bin/bash", ["/bin/bash", str(bootstrap), *sys.argv[1:]])
+
     try:
         import tkinter  # noqa: F401
         return
     except ImportError:
         pass
-
-    if sys.platform == "darwin":
-        raise RuntimeError(
-            "Python Tk is not installed. Install Python with Tk support, then run piko-setup again."
-        )
 
     pkexec = shutil.which("pkexec")
     if not pkexec:
@@ -98,6 +125,7 @@ def main() -> int:
     import tkinter as tk
     from tkinter import filedialog, messagebox, ttk
 
+    is_mac = sys.platform == "darwin"
     available_platform = "macOS" if sys.platform == "darwin" else "Linux (Ubuntu)"
 
     root = tk.Tk()
@@ -132,6 +160,13 @@ def main() -> int:
         "accent_active": "#829dff",
         "disabled": "#565d6b",
     }
+    if is_mac:
+        colors.update({
+            "background": "#181c24", "surface": "#293241",
+            "input": "#10141c", "text": "#e8edf5",
+            "muted": "#aebbd0", "accent": "#245ac4",
+            "accent_active": "#306bdc", "disabled": "#75839a",
+        })
     style = ttk.Style(root)
     available_themes = style.theme_names()
     for theme_name in ("clam", "classic"):
@@ -176,6 +211,41 @@ def main() -> int:
     root.option_add("*TCombobox*Listbox.foreground", colors["text"])
     root.option_add("*TCombobox*Listbox.selectBackground", colors["accent"])
     root.option_add("*TCombobox*Listbox.selectForeground", "#ffffff")
+
+    if is_mac:
+        # Clam draws button backgrounds reliably on macOS, unlike tk.Button.
+        style.configure(
+            "TButton", background=colors["surface"], foreground=colors["text"],
+            bordercolor=colors["surface"], lightcolor=colors["surface"],
+            darkcolor=colors["surface"], padding=(16, 10),
+            font=("TkDefaultFont", 11), focuscolor=colors["accent_active"],
+        )
+        style.map(
+            "TButton",
+            background=[("disabled", colors["surface"]), ("pressed", colors["input"]),
+                        ("active", "#35445b")],
+            foreground=[("disabled", colors["disabled"]), ("!disabled", colors["text"])],
+        )
+        style.configure(
+            "Accent.TButton", background=colors["accent"], foreground="#ffffff",
+            bordercolor=colors["accent"], font=("TkDefaultFont", 11, "bold"),
+        )
+        style.map(
+            "Accent.TButton",
+            background=[("disabled", colors["surface"]), ("pressed", "#1d49a0"),
+                        ("active", colors["accent_active"])],
+            foreground=[("disabled", colors["disabled"]), ("!disabled", "#ffffff")],
+        )
+
+    def make_button(parent: object, **options: object) -> object:
+        if not is_mac:
+            return tk.Button(parent, **options)
+        button_options = {key: value for key, value in options.items()
+                          if key in {"text", "command", "width", "state"}}
+        button_options["style"] = (
+            "Accent.TButton" if options.get("background") == colors["accent"] else "TButton"
+        )
+        return ttk.Button(parent, **button_options)
 
     outer = ttk.Frame(root, padding=16)
     outer.grid(row=0, column=0, sticky="nsew")
@@ -249,7 +319,7 @@ def main() -> int:
     ttk.Label(
         selection_frame, textvariable=selected_patch, wraplength=path_wraplength
     ).grid(row=0, column=1, sticky="w", pady=5)
-    tk.Button(
+    make_button(
         selection_frame,
         text="Browse…",
         command=browse_patch,
@@ -270,7 +340,7 @@ def main() -> int:
     ttk.Label(
         selection_frame, textvariable=selected_board, wraplength=path_wraplength
     ).grid(row=1, column=1, sticky="w", pady=5)
-    tk.Button(
+    make_button(
         selection_frame,
         text="Browse…",
         command=browse_board,
@@ -291,12 +361,13 @@ def main() -> int:
         log_frame,
         wrap="word",
         state="disabled",
-        font=("monospace", 9),
+        font=("Menlo", 11) if is_mac else ("monospace", 9),
         height=14,
         background=colors["input"],
         foreground=colors["text"],
         insertbackground=colors["text"],
         selectbackground=colors["accent"],
+        selectforeground="#ffffff",
         relief="flat",
         padx=10,
         pady=10,
@@ -319,7 +390,7 @@ def main() -> int:
     button_row = ttk.Frame(outer)
     button_row.grid(row=6, column=0, sticky="ew", pady=(4, 18))
     button_row.columnconfigure(0, weight=1)
-    install_button = tk.Button(
+    install_button = make_button(
         button_row,
         text="Run / Flash" if already_installed else "Install",
         width=16,

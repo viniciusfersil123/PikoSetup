@@ -96,7 +96,7 @@ if [[ ! -d "$VENV_DIR" ]]; then
 fi
 "$VENV_DIR/bin/python" -m pip install --upgrade pip
 clone_or_update https://github.com/Wasted-Audio/hvcc.git "$HVCC_DIR" "hvcc"
-"$VENV_DIR/bin/pip" install -e "$HVCC_DIR" jinja2
+"$VENV_DIR/bin/python" -m pip install -e "$HVCC_DIR" -r "$PIKOPD_DIR/requirements.txt"
 
 say "Building and installing picotool"
 clone_or_update https://github.com/raspberrypi/picotool.git "$PICOTOOL_DIR" "picotool"
@@ -160,16 +160,16 @@ case "$login_shell" in
     ;;
 esac
 
-cat > "$PIKO_HOME/pikopd" <<EOF
+cat > "$PIKO_HOME/piko-run" <<EOF
 #!/usr/bin/env bash
 set -e
 export PICO_SDK_PATH="$PICO_SDK_DIR"
 source "$VENV_DIR/bin/activate"
 exec python "$PIKOPD_DIR/pikopd.py" "\$@"
 EOF
-chmod +x "$PIKO_HOME/pikopd"
+chmod +x "$PIKO_HOME/piko-run"
 
 say "Installation complete"
 printf 'Workspace: %s\n' "$PIKO_HOME"
-printf 'Build a patch: cd %q && ./pikopd patches/heavy.pd my_project\n' "$PIKOPD_DIR"
+printf 'Build a patch: cd %q && ../piko-run patches/heavy.pd my_project\n' "$PIKOPD_DIR"
 printf 'PICO_SDK_PATH is saved in %s. Run: source %q (or open a new terminal).\n' "$shell_config_to_source" "$shell_config_to_source"
