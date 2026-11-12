@@ -49,7 +49,7 @@ When installation finishes, the button changes to **Run / Flash**. PikoSetup rem
 
 ## 4. Build and flash a patch 🎵
 
-1. Choose a `.pd` patch and a board `.json` file with **Browse…**. The example patch and `board.json` are good starting points.
+1. PikoSetup starts with `test.pd` and `board.json` from the downloaded PikoSetup folder. Use **Browse…** to choose different files if needed.
 2. Connect the Pico in BOOTSEL mode: hold the **BOOTSEL** button while plugging the Pico into USB, then release the button.
 3. Click **Run / Flash** and confirm. PikoSetup builds the patch and sends the firmware to the Pico.
 

@@ -144,10 +144,10 @@ def main() -> int:
     if selected_platform.get() not in INSTALLERS:
         selected_platform.set(available_platform)
     selected_patch = tk.StringVar(
-        value=preferences.get("patch", str(PIKOPD_DIR / DEMO_PATCH))
+        value=preferences.get("patch", str(ROOT / "test.pd"))
     )
     selected_board = tk.StringVar(
-        value=preferences.get("board", str(PIKOPD_DIR / "board.json"))
+        value=preferences.get("board", str(ROOT / "board.json"))
     )
 
     colors = {
