@@ -409,6 +409,24 @@ def main() -> int:
         cursor="hand2",
     )
     install_button.grid(row=0, column=0, sticky="e", padx=4, pady=2)
+    update_button = make_button(
+        button_row,
+        text="Update PikoSetup",
+        width=18,
+        height=2,
+        padx=12,
+        pady=10,
+        background=colors["surface"],
+        foreground=colors["text"],
+        activebackground=colors["accent_active"],
+        activeforeground="#ffffff",
+        disabledforeground=colors["muted"],
+        relief="flat",
+        borderwidth=0,
+        highlightthickness=0,
+        cursor="hand2",
+    )
+    update_button.grid(row=0, column=1, sticky="e", padx=4, pady=2)
 
     messages: queue.Queue[tuple[str, object]] = queue.Queue()
     process: subprocess.Popen[bytes] | None = None
@@ -452,11 +470,27 @@ def main() -> int:
             install_button.configure(state="normal")
             return
         install_button.configure(state="disabled")
+        update_button.configure(state="disabled")
         status.set("Installing…")
         append_output("Starting installer…\n\n")
         threading.Thread(
             target=run_command,
             args=("install", [str(installer)], ROOT, selected_platform.get() == "Linux (Ubuntu)"),
+            daemon=True,
+        ).start()
+
+    def start_update() -> None:
+        updater = ROOT / "update-pikosetup.py"
+        if not updater.is_file():
+            messagebox.showerror("PikoSetup", f"Updater not found:\n{updater}")
+            return
+        install_button.configure(state="disabled")
+        update_button.configure(state="disabled")
+        status.set("Updating PikoSetup…")
+        append_output("Checking for PikoSetup updates…\n\n")
+        threading.Thread(
+            target=run_command,
+            args=("update", [sys.executable, str(updater)], ROOT),
             daemon=True,
         ).start()
 
@@ -483,6 +517,7 @@ def main() -> int:
         ):
             return
         install_button.configure(state="disabled")
+        update_button.configure(state="disabled")
         status.set(f"Building {patch_path.name} and flashing the Pico…")
         append_output(f"\nBuilding and flashing {patch_path}…\n\n")
         command = [
@@ -511,6 +546,7 @@ def main() -> int:
                 action, return_code = value
                 code = int(return_code)
                 install_button.configure(state="normal")
+                update_button.configure(state="normal")
                 if action == "install" and code == 0:
                     status.set("Installation complete. Select your files, then use Run / Flash.")
                     append_output("\nInstallation completed successfully.\n")
@@ -523,8 +559,16 @@ def main() -> int:
                     status.set(f"{Path(selected_patch.get()).name} was built and flashed to the Pico.")
                     append_output("\nFirmware built and flashed successfully.\n")
                     messagebox.showinfo("PikoPD Setup", "Firmware built and flashed successfully.")
+                elif action == "update" and code == 0:
+                    status.set("PikoSetup updated. Restart the app to use the latest version.")
+                    append_output("\nUpdate completed successfully. Restart PikoSetup to use the update.\n")
+                    messagebox.showinfo("PikoSetup", "Update complete. Restart PikoSetup to use the latest version.")
                 else:
-                    operation = "installation" if action == "install" else "Run / Flash"
+                    operation = {
+                        "install": "installation",
+                        "update": "update",
+                        "flash": "Run / Flash",
+                    }.get(action, "operation")
                     status.set(f"The {operation} operation failed (exit code {code}).")
                     append_output(f"\nOperation finished with exit code {code}.\n")
                     messagebox.showerror(
@@ -534,6 +578,7 @@ def main() -> int:
             elif kind == "launch_error":
                 action, error = value
                 install_button.configure(state="normal")
+                update_button.configure(state="normal")
                 status.set("Could not start the operation.")
                 append_output(f"\nCould not start: {error}\n")
         root.after(100, poll_messages)
@@ -542,6 +587,7 @@ def main() -> int:
         install_button.configure(command=start_flash)
     else:
         install_button.configure(command=start_install)
+    update_button.configure(command=start_update)
     root.after(100, poll_messages)
     root.mainloop()
     return 0

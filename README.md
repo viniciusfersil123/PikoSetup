@@ -47,6 +47,8 @@ Choose **Linux (Ubuntu)** or **macOS** in the app, then click **Install**. This 
 
 When installation finishes, the button changes to **Run / Flash**. PikoSetup remembers your operating system, patch, and board configuration for next time.
 
+Use **Update PikoSetup** in the app to get the latest project files. Git checkouts use `git pull`; folders extracted from a ZIP download the latest release files directly. Before replacing files in a ZIP copy, the updater saves the existing versions in a `.pikosetup-update-backup-*` folder. Restart the app after updating.
+
 ## 4. Build and flash a patch 🎵
 
 1. PikoSetup starts with `test.pd` and `board.json` from the downloaded PikoSetup folder. Use **Browse…** to choose different files if needed.
