@@ -45,8 +45,10 @@ def load_preferences() -> dict[str, str]:
 
 def save_preferences(patch_path: str, board_path: str, platform: str) -> None:
     PREFERENCES_FILE.parent.mkdir(parents=True, exist_ok=True)
+    preferences = load_preferences()
+    preferences.update({"patch": patch_path, "board": board_path, "platform": platform})
     PREFERENCES_FILE.write_text(
-        json.dumps({"patch": patch_path, "board": board_path, "platform": platform}, indent=2) + "\n",
+        json.dumps(preferences, indent=2) + "\n",
         encoding="utf-8",
     )
 
@@ -149,6 +151,7 @@ def main() -> int:
     selected_board = tk.StringVar(
         value=preferences.get("board", str(ROOT / "board.json"))
     )
+    skip_flash_confirmation = bool(preferences.get("skip_flash_confirmation", False))
 
     colors = {
         "background": "#17191f",
@@ -494,6 +497,169 @@ def main() -> int:
             daemon=True,
         ).start()
 
+    def confirm_flash(patch_path: Path, board_path: Path) -> bool:
+        if skip_flash_confirmation:
+            return True
+
+        dialog = tk.Toplevel(root)
+        dialog.title("Flash firmware to Pico")
+        dialog.transient(root)
+        dialog.resizable(False, False)
+        dialog.configure(background=colors["background"])
+        dialog.grab_set()
+        choice = tk.BooleanVar(value=False)
+        result = {"confirmed": False}
+        content = tk.Frame(
+            dialog, padx=18, pady=18, background=colors["background"]
+        )
+        content.pack(fill="both", expand=True)
+        tk.Label(
+            content,
+            text=(
+                "Connect the Raspberry Pi Pico in BOOTSEL mode.\n\n"
+                f"This will compile {patch_path.name} using {board_path.name} and flash the device."
+            ),
+            justify="left",
+            wraplength=420,
+            background=colors["background"],
+            foreground=colors["text"],
+        ).pack(anchor="w")
+        tk.Checkbutton(
+            content,
+            text="Stop asking again",
+            variable=choice,
+            background=colors["background"],
+            foreground=colors["text"],
+            activebackground=colors["background"],
+            activeforeground=colors["text"],
+            selectcolor=colors["surface"],
+            relief="flat",
+            highlightthickness=0,
+        ).pack(
+            anchor="w", pady=(14, 10)
+        )
+        buttons = tk.Frame(content, background=colors["background"])
+        buttons.pack(fill="x")
+
+        def finish(confirmed: bool) -> None:
+            result["confirmed"] = confirmed
+            if confirmed and choice.get():
+                nonlocal skip_flash_confirmation
+                skip_flash_confirmation = True
+                stored = load_preferences()
+                stored.update({
+                    "patch": selected_patch.get(),
+                    "board": selected_board.get(),
+                    "platform": selected_platform.get(),
+                    "skip_flash_confirmation": True,
+                })
+                PREFERENCES_FILE.parent.mkdir(parents=True, exist_ok=True)
+                PREFERENCES_FILE.write_text(json.dumps(stored, indent=2) + "\n", encoding="utf-8")
+            dialog.destroy()
+
+        tk.Button(
+            buttons,
+            text="Cancel",
+            command=lambda: finish(False),
+            background=colors["surface"],
+            foreground=colors["text"],
+            activebackground=colors["accent_active"],
+            activeforeground="#ffffff",
+            relief="flat",
+            padx=18,
+            pady=8,
+            cursor="hand2",
+        ).pack(side="right")
+        tk.Button(
+            buttons,
+            text="Flash",
+            command=lambda: finish(True),
+            background=colors["accent"],
+            foreground="#ffffff",
+            activebackground=colors["accent_active"],
+            activeforeground="#ffffff",
+            relief="flat",
+            padx=18,
+            pady=8,
+            cursor="hand2",
+        ).pack(
+            side="right", padx=(0, 8)
+        )
+        dialog.protocol("WM_DELETE_WINDOW", lambda: finish(False))
+        dialog.bind("<Return>", lambda _event: finish(True))
+        dialog.bind("<Escape>", lambda _event: finish(False))
+        root.wait_window(dialog)
+        return result["confirmed"]
+
+    def show_flash_result(success: bool, detail: str) -> None:
+        dialog = tk.Toplevel(root)
+        dialog.title("Flash result")
+        dialog.transient(root)
+        dialog.resizable(False, False)
+        dialog.configure(background=colors["background"])
+        content = tk.Frame(dialog, padx=24, pady=20, background=colors["background"])
+        content.pack(fill="both", expand=True)
+        symbol = "✓" if success else "✕"
+        heading = "Flash successful" if success else "Flash failed"
+        symbol_color = "#45c486" if success else "#ff667a"
+        tk.Label(
+            content,
+            text=symbol,
+            font=("TkDefaultFont", 36, "bold"),
+            background=colors["background"],
+            foreground=symbol_color,
+        ).pack()
+        tk.Label(
+            content,
+            text=heading,
+            font=("TkDefaultFont", 14, "bold"),
+            background=colors["background"],
+            foreground=colors["text"],
+        ).pack(pady=(0, 8))
+        tk.Label(
+            content,
+            text=detail,
+            wraplength=380,
+            justify="center",
+            background=colors["background"],
+            foreground=colors["muted"],
+        ).pack()
+        countdown = tk.StringVar()
+        tk.Label(
+            content,
+            textvariable=countdown,
+            background=colors["background"],
+            foreground=colors["muted"],
+        ).pack(pady=(14, 10))
+        tk.Button(
+            content,
+            text="Close now",
+            command=dialog.destroy,
+            background=colors["surface"],
+            foreground=colors["text"],
+            activebackground=colors["accent_active"],
+            activeforeground="#ffffff",
+            relief="flat",
+            padx=16,
+            pady=7,
+            cursor="hand2",
+        ).pack()
+
+        remaining = [10]
+
+        def tick() -> None:
+            if not dialog.winfo_exists():
+                return
+            countdown.set(f"Closing automatically in {remaining[0]} seconds…")
+            if remaining[0] <= 0:
+                dialog.destroy()
+                return
+            remaining[0] -= 1
+            dialog.after(1000, tick)
+
+        dialog.protocol("WM_DELETE_WINDOW", dialog.destroy)
+        tick()
+
     def start_flash() -> None:
         patch_path = Path(selected_patch.get()).expanduser()
         board_path = Path(selected_board.get()).expanduser()
@@ -509,12 +675,7 @@ def main() -> int:
                 f"PikoPD launcher not found:\n{PIKOPD_LAUNCHER}",
             )
             return
-        if not messagebox.askyesno(
-            "Flash firmware to Pico",
-            "Connect the Raspberry Pi Pico in BOOTSEL mode.\n\n"
-            f"This will compile {patch_path.name} using {board_path.name} and flash the device.\n"
-            "Continue?",
-        ):
+        if not confirm_flash(patch_path, board_path):
             return
         install_button.configure(state="disabled")
         update_button.configure(state="disabled")
@@ -558,11 +719,17 @@ def main() -> int:
                 elif action == "flash" and code == 0:
                     status.set(f"{Path(selected_patch.get()).name} was built and flashed to the Pico.")
                     append_output("\nFirmware built and flashed successfully.\n")
-                    messagebox.showinfo("PikoPD Setup", "Firmware built and flashed successfully.")
+                    show_flash_result(True, f"{Path(selected_patch.get()).name} was built and sent to the Pico.")
                 elif action == "update" and code == 0:
-                    status.set("PikoSetup updated. Restart the app to use the latest version.")
-                    append_output("\nUpdate completed successfully. Restart PikoSetup to use the update.\n")
-                    messagebox.showinfo("PikoSetup", "Update complete. Restart PikoSetup to use the latest version.")
+                    status.set("PikoSetup updated. Restarting…")
+                    append_output("\nUpdate completed successfully. Restarting PikoSetup…\n")
+                    root.after(
+                        500,
+                        lambda: os.execv(
+                            sys.executable,
+                            [sys.executable, str(Path(__file__).resolve()), *sys.argv[1:]],
+                        ),
+                    )
                 else:
                     operation = {
                         "install": "installation",
@@ -571,16 +738,21 @@ def main() -> int:
                     }.get(action, "operation")
                     status.set(f"The {operation} operation failed (exit code {code}).")
                     append_output(f"\nOperation finished with exit code {code}.\n")
-                    messagebox.showerror(
-                        "PikoPD Setup",
-                        "The operation failed. Check the output above for details.",
-                    )
+                    if action == "flash":
+                        show_flash_result(False, f"Flash stopped with exit code {code}. Check the output for details.")
+                    else:
+                        messagebox.showerror(
+                            "PikoPD Setup",
+                            "The operation failed. Check the output above for details.",
+                        )
             elif kind == "launch_error":
                 action, error = value
                 install_button.configure(state="normal")
                 update_button.configure(state="normal")
                 status.set("Could not start the operation.")
                 append_output(f"\nCould not start: {error}\n")
+                if action == "flash":
+                    show_flash_result(False, f"Could not start the flash command: {error}")
         root.after(100, poll_messages)
 
     if already_installed:
